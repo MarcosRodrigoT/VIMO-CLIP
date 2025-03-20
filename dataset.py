@@ -1,5 +1,7 @@
+import os
 import h5py
 import torch
+import torchvision.io as io
 from torch.utils.data import Dataset, DataLoader
 from torch.nn.utils.rnn import pad_sequence
 
@@ -17,7 +19,6 @@ def sparse_sampling(embeddings, num_frames):
     total_frames = embeddings.shape[0]
 
     if total_frames > num_frames:
-        # Equidistant indices for sampling
         indices = torch.linspace(0, total_frames - 1, num_frames).long()
         embeddings = embeddings[indices]
 
@@ -37,8 +38,9 @@ class HDF5VideoDataset(Dataset):
         num_frames (int, optional): If set, performs sparse sampling to this number of frames.
     """
 
-    def __init__(self, hdf5_path, transform=None, num_frames=None):
-        self.hdf5_path = hdf5_path
+    def __init__(self, clip_embeddings_dir, flow_videos_dir, transform=None, num_frames=None):
+        self.hdf5_path = clip_embeddings_dir
+        self.flow_videos_dir = flow_videos_dir
         self.transform = transform
         self.num_frames = num_frames
 
@@ -67,11 +69,21 @@ class HDF5VideoDataset(Dataset):
             if self.transform:
                 embeddings = self.transform(embeddings)
 
+            # Load corresponding optical flow video
+            flow_video_path = os.path.join(self.flow_videos_dir, video_id)
+            flow_video, _, _ = io.read_video(flow_video_path, pts_unit="sec")  # shape: (T, H, W, C)
+            flow_video = flow_video.permute(0, 3, 1, 2)  # (T, C, H, W)
+
+            if self.num_frames and flow_video.size(0) > self.num_frames:
+                indices = torch.linspace(0, flow_video.size(0) - 1, self.num_frames).long()
+                flow_video = flow_video[indices]
+
             return {
                 "video_id": video_id,
                 "embeddings": embeddings,
                 "labels": labels,
-                "total_frames": embeddings.shape[0],  # T after sampling (if any)
+                "flow_video": flow_video,
+                "total_frames": embeddings.shape[0],
             }
 
 
@@ -82,13 +94,22 @@ def collate_fn_pad(batch):
     """
     # Separate components
     embeddings_list = [item["embeddings"] for item in batch]  # list of (T_i, embed_dim)
+    flow_videos_list = [item["flow_video"] for item in batch]
+
     labels = torch.stack([item["labels"] for item in batch])  # shape (B, C)
     lengths = torch.tensor([emb.shape[0] for emb in embeddings_list])  # (B,)
 
     # Pad embeddings along the time dimension
-    padded_embeddings = pad_sequence(embeddings_list, batch_first=True)  # (B, T_max, embed_dim)
+    padded_embeddings = pad_sequence(embeddings_list, batch_first=True)
+    padded_flow_videos = pad_sequence(flow_videos_list, batch_first=True)
 
-    return {"video_id": [item["video_id"] for item in batch], "embeddings": padded_embeddings, "labels": labels, "lengths": lengths}  # (B, T_max, embed_dim)  # (B, C)  # (B,)
+    return {
+        "video_id": [item["video_id"] for item in batch],
+        "embeddings": padded_embeddings,
+        "flow_video": padded_flow_videos,
+        "labels": labels,
+        "lengths": lengths,
+    }
 
 
 def check_data_loading(dataloader):
@@ -102,6 +123,7 @@ def check_data_loading(dataloader):
     print(f"Batch keys: {batch.keys()}")
     print(f"video_id (list): {batch['video_id']}")
     print(f"embeddings shape: {batch['embeddings'].shape}")
+    print(f"flow_video shape: {batch['flow_video'].shape}")
     print(f"labels shape: {batch['labels'].shape}")
     print(f"lengths: {batch['lengths']}")
 
@@ -112,14 +134,13 @@ if __name__ == "__main__":
     # Hyperparameters
     BATCH_SIZE = 8
     NUM_WORKERS = 4
-    EPOCHS = 10
 
     # Paths to HDF5 files containing CLIP embeddings for training/validation
     train_hdf5_path = "/mnt/Data/enz/AnimalKingdom/action_recognition/dataset/ak_train_clip_vit32.h5"
-    val_hdf5_path = "/mnt/Data/enz/AnimalKingdom/action_recognition/dataset/ak_val_clip_vit32.h5"
+    flow_videos_dir = "/mnt/Data/enz/AnimalKingdom/action_recognition/dataset/flows"
 
     # Create dataset and DataLoader
-    train_dataset = HDF5VideoDataset(train_hdf5_path, num_frames=None)  # Example: no sparse sampling
+    train_dataset = HDF5VideoDataset(train_hdf5_path, flow_videos_dir, num_frames=None)
     train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, collate_fn=collate_fn_pad, num_workers=NUM_WORKERS)
 
     # Verify the data loading process
