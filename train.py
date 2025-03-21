@@ -27,6 +27,7 @@ def train():
     learning_rate = 1e-4
     distillation_loss_mode = "cosine"
     num_classes = 140
+    grad_clip_norm = None
 
     # === Dataset paths ===
     train_hdf5_path = "/mnt/Data/enz/AnimalKingdom/action_recognition/dataset/ak_train_clip_vit32.h5"
@@ -60,6 +61,7 @@ def train():
             student_embeddings, logits = model(flow_videos)  # (B, T-1, embed_dim), (B, num_classes)
 
             # Compute losses
+            # TODO: Meter MLP ente medias de student_embeddings y teacher_emb_diff como hacen en FROSTER
             distill_loss = distillation_loss(student_embeddings, teacher_emb_diff, mode=distillation_loss_mode)
             class_loss = classification_loss(logits, labels)
 
@@ -69,6 +71,8 @@ def train():
             # Backward and optimization step
             optimizer.zero_grad()
             total_loss.backward()
+            if grad_clip_norm is not None:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip_norm)
             optimizer.step()
 
             # Accumulate losses for logging
