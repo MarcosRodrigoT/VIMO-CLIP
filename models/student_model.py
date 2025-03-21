@@ -12,6 +12,8 @@ class FlowStudentModel(nn.Module):
 
         # Load CLIP model
         model, preprocess = clip.load(clip_model_name, device=self.device)
+        model = model.float()  # put CLIP in float32
+
         self.preprocess = preprocess
         self.visual_encoder = model.visual
         embed_dim = self.visual_encoder.output_dim
@@ -28,7 +30,7 @@ class FlowStudentModel(nn.Module):
         Compute embeddings and classification logits for optical flow frames using CLIP visual encoder.
 
         Args:
-            flow_videos (torch.Tensor): (B, T, 3, H, W), values expected in [0, 255]
+            flow_videos (torch.Tensor): (B, T, 3, H, W)
 
         Returns:
             tuple: embeddings (B, T, embed_dim), logits (B, num_classes)
@@ -43,7 +45,7 @@ class FlowStudentModel(nn.Module):
         flow_frames_processed = torch.stack([clip_preprocess(to_pil_image(frame)) for frame in flow_frames])
 
         # Move to correct device and dtype
-        flow_frames_processed = flow_frames_processed.to(self.device).half()
+        flow_frames_processed = flow_frames_processed.to(self.device)  # .half() in case we are working with CLIP in float16
 
         # Compute embeddings
         embeddings = self.visual_encoder(flow_frames_processed)
