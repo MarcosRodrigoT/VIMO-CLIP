@@ -61,6 +61,11 @@ def train():
             # Student model forward
             student_embeddings, logits = model(flow_videos)  # (B, T-1, embed_dim), (B, num_classes)
 
+            if teacher_emb_diff.shape[1] != student_embeddings.shape[1]:
+                print(f"Video: {batch['video_id']}")
+                print(f"Skipping mismatched batch! Teacher: {teacher_emb_diff.shape}, Student: {student_embeddings.shape}")
+                continue
+
             # Compute losses
             # TODO: Meter MLP ente medias de student_embeddings y teacher_emb_diff como hacen en FROSTER
             distill_loss = distillation_loss(student_embeddings, teacher_emb_diff, mode=distillation_loss_mode)
