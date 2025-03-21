@@ -22,8 +22,8 @@ def train():
 
     # === Hyperparameters ===
     epochs = 10
-    batch_size = 1
-    num_workers = 1
+    batch_size = 2
+    num_workers = 4
     learning_rate = 1e-4
     distillation_loss_mode = "cosine"
     num_classes = 140
@@ -39,6 +39,7 @@ def train():
 
     # === Model, optimizer ===
     model = FlowStudentModel(clip_model_name="ViT-B/32", device=device, num_classes=num_classes).to(device)
+    model = torch.nn.DataParallel(model)
 
     optimizer = Adam(model.parameters(), lr=learning_rate)
 
