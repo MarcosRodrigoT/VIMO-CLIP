@@ -142,13 +142,11 @@ def check_data_loading(dataloader):
 
 
 if __name__ == "__main__":
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-
     # Hyperparameters
     BATCH_SIZE = 8
     NUM_WORKERS = 4
 
-    # Paths to HDF5 files containing CLIP embeddings for training/validation
+    # Paths to HDF5 files containing CLIP embeddings for training and path to optical flow videos directory
     train_hdf5_path = "/mnt/Data/enz/AnimalKingdom/action_recognition/dataset/ak_train_clip_vit32.h5"
     flow_videos_dir = "/mnt/Data/enz/AnimalKingdom/action_recognition/dataset/flows"
 
