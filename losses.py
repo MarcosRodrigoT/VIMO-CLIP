@@ -17,7 +17,24 @@ def distillation_loss(student_embeddings, teacher_embeddings, mode="mse"):
     if mode == "mse":
         loss = F.mse_loss(student_embeddings, teacher_embeddings)
     elif mode == "cosine":
-        loss = 1 - F.cosine_similarity(student_embeddings, teacher_embeddings, dim=-1).mean()
+        # This is more clean but produces NaNs
+        # loss = 1 - F.cosine_similarity(student_embeddings, teacher_embeddings, dim=-1).mean()
+
+        # Manual computation due to NaNs appearing because of a division by 0
+        epsilon = 1e-5
+
+        # Compute norms and clamp to epsilon
+        student_norm = student_embeddings.norm(dim=-1).clamp(min=epsilon)
+        teacher_norm = teacher_embeddings.norm(dim=-1).clamp(min=epsilon)
+
+        # Compute cosine similarity safely
+        cosine_sim = (student_embeddings * teacher_embeddings).sum(dim=-1) / (student_norm * teacher_norm)
+
+        # Clamp cosine_sim between -1 and 1 to avoid numerical instability
+        cosine_sim = cosine_sim.clamp(-1 + epsilon, 1 - epsilon)
+
+        # Compute loss
+        loss = 1 - cosine_sim.mean()
     else:
         raise ValueError(f"Unsupported mode '{mode}'. Choose 'mse' or 'cosine'.")
 
