@@ -36,17 +36,30 @@ class HDF5VideoDataset(Dataset):
         hdf5_path (str): Path to the HDF5 file.
         transform (callable, optional): Transform to apply to the embeddings.
         num_frames (int, optional): If set, performs sparse sampling to this number of frames.
+        max_frames (int, optional): If set, skip dataset videos that exceed this number of frames.
     """
 
-    def __init__(self, clip_embeddings_dir, flow_videos_dir, transform=None, num_frames=None):
+    def __init__(self, clip_embeddings_dir, flow_videos_dir, transform=None, num_frames=None, max_frames=None):
         self.hdf5_path = clip_embeddings_dir
         self.flow_videos_dir = flow_videos_dir
         self.transform = transform
         self.num_frames = num_frames
+        self.max_frames = max_frames
 
         # Collect the keys (video IDs) from the HDF5 file.
         with h5py.File(self.hdf5_path, "r") as f:
-            self.keys = list(f.keys())
+            all_keys = list(f.keys())
+
+            # Skip videos if they exceed max_frames
+            if self.max_frames is not None:
+                filtered_keys = []
+                for k in all_keys:
+                    # Check the number of frames in the embeddings
+                    if f[k]["embeddings"].shape[0] <= self.max_frames:
+                        filtered_keys.append(k)
+                self.keys = filtered_keys
+            else:
+                self.keys = all_keys
 
     def __len__(self):
         return len(self.keys)
@@ -140,7 +153,7 @@ if __name__ == "__main__":
     flow_videos_dir = "/mnt/Data/enz/AnimalKingdom/action_recognition/dataset/flows"
 
     # Create dataset and DataLoader
-    train_dataset = HDF5VideoDataset(train_hdf5_path, flow_videos_dir, num_frames=None)
+    train_dataset = HDF5VideoDataset(train_hdf5_path, flow_videos_dir, num_frames=None, max_frames=500)
     train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, collate_fn=collate_fn_pad, num_workers=NUM_WORKERS)
 
     # Verify the data loading process
