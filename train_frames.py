@@ -12,13 +12,13 @@ def train():
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     epochs = 10
-    batch_size = 8
+    batch_size = 32
     num_workers = 4
     learning_rate = 1e-4
     distillation_loss_mode = "cosine"
     num_classes = 140
     grad_clip_norm = None
-    sequence_length = 10
+    sequence_length = 30
 
     # === Dataset paths ===
     train_hdf5_path = "/mnt/Data/enz/AnimalKingdom/action_recognition/dataset/ak_train_clip_vit32.h5"
@@ -50,9 +50,7 @@ def train():
             # Compute embedding differences (teacher)
             teacher_emb_diff = embeddings_gt[:, 1:, :] - embeddings_gt[:, :-1, :]  # shape (B, T-1, embed_dim)
 
-            # Student forward: if your FlowStudentModel still expects a (B, T, 3, H, W) shape, you can unsqueeze a time dimension:
-            flow_frames = flow_frames.unsqueeze(1)  # shape => (B, 1, C, H, W)
-
+            # Student forward
             student_embeddings, logits = model(flow_frames)  # shape (B, 1, embed_dim)
 
             # Compute losses
