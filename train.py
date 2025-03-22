@@ -34,7 +34,7 @@ def train():
     flow_videos_dir = "/mnt/Data/enz/AnimalKingdom/action_recognition/dataset/flows"
 
     # === Dataset and DataLoader ===
-    train_dataset = HDF5VideoDataset(clip_embeddings_dir=train_hdf5_path, flow_videos_dir=flow_videos_dir, num_frames=None, max_frames=500)
+    train_dataset = HDF5VideoDataset(clip_embeddings_dir=train_hdf5_path, flow_videos_dir=flow_videos_dir, num_frames=None, max_frames=450)
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn_pad, num_workers=num_workers)
 
     # === Model, optimizer ===
