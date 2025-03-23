@@ -102,17 +102,13 @@ def main(flow_videos_dir, output_h5_path, checkpoint_dir, clip_model_name, batch
 
                     # FlowStudentModel expects (B, T, 3, H, W)
                     frames = frames.unsqueeze(0)  # => (1, T, C, H, W)
-                    embeddings, _ = model(frames)  # => (1, T, embed_dim), (1, num_classes)
+                    embeddings, _, _ = model(frames)  # => (1, T, embed_dim), (1, num_classes)
 
                     embeddings = embeddings.squeeze(0).cpu().numpy()  # => (T, embed_dim)
-                    # We store dummy labels for (C,). The loader expects shape (C,)
-                    # Here we'll store zeros, shape = (num_classes,)
-                    dummy_labels = np.zeros((num_classes,), dtype=np.float32)  # Creo que podemos cargarnos los labels
 
                     # Create group for this video
                     group = h5f.create_group(video_id)
                     group.create_dataset("embeddings", data=embeddings)
-                    group.create_dataset("labels", data=dummy_labels)  # Creo que podemos cargarnos los labels
 
                     print(f"[{video_id}] shape={embeddings.shape} => saved to group '{video_id}'.")
 
