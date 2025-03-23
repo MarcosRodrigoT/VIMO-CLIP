@@ -88,7 +88,12 @@ class HDF5VideoDataset(Dataset):
         # But clamp if T_flow < flow_end
         flow_end = min(flow_end, T_flow)
 
+        # Guarantee that flow_start <= T_flow - 1
+        flow_start = min(flow_start, T_flow - 1)
+        flow_end = min(flow_end, T_flow)
+
         flow_seq = flow_video[flow_start:flow_end]
+
         # If for some reason the flow_seq is too short, we can pad or clamp
         expected_len = self.sequence_length - 1
         if flow_seq.shape[0] < expected_len:

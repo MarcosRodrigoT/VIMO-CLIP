@@ -60,7 +60,7 @@ def train():
             teacher_emb_diff = compute_embedding_differences(embeddings_gt)  # (B, T-1, embed_dim)
 
             # Student model forward
-            student_embeddings, student_embeddings_for_distillation, logits = model(flow_videos)  # (B, T-1, embed_dim), (B, num_classes)
+            student_embeddings, student_embeddings_for_distillation, logits = model(flow_videos)  # (B, T-1, embed_dim), (B, T-1, embed_dim), (B, num_classes)
 
             if teacher_emb_diff.shape[1] != student_embeddings_for_distillation.shape[1]:
                 print(f"Video: {batch['video_id']}")

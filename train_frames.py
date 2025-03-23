@@ -11,14 +11,15 @@ from tqdm import tqdm
 def train():
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    epochs = 10
+    epochs = 30
     batch_size = 32
     num_workers = 4
-    learning_rate = 1e-4
+    learning_rate = 3e-4
     distillation_loss_mode = "cosine"
     num_classes = 140
     grad_clip_norm = None
     sequence_length = 30
+    residual_alpha = 0.1
 
     # === Dataset paths ===
     train_hdf5_path = "/mnt/Data/enz/AnimalKingdom/action_recognition/dataset/ak_train_clip_vit32.h5"
@@ -29,7 +30,7 @@ def train():
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn, num_workers=num_workers)
 
     # === Model, optimizer ===
-    model = FlowStudentModel(clip_model_name="ViT-B/32", device=device, num_classes=num_classes).to(device)
+    model = FlowStudentModel(clip_model_name="ViT-B/32", device=device, num_classes=num_classes, alpha=residual_alpha).to(device)
     model = torch.nn.DataParallel(model)
 
     optimizer = Adam(model.parameters(), lr=learning_rate)
@@ -42,20 +43,18 @@ def train():
         progress_bar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs}")
 
         for batch in progress_bar:
-            # FIX: ChatGPT se ha liado un poco y sigue pensando que cada batch solo contiene 2 RGB frame embeddings en lugar de sequence_length. Checkear los shapes que me da!!!
             embeddings_gt = batch["rgb_emb"].to(device)  # shape (B, T, embed_dim)
-            flow_frames = batch["flow_frames"].to(device)  # shape (B, C, H, W)
+            flow_frames = batch["flow_frames"].to(device)  # shape (B, T-1, 3, H, W)
             labels = batch["labels"].to(device)  # shape (B, num_classes)
 
             # Compute embedding differences (teacher)
             teacher_emb_diff = embeddings_gt[:, 1:, :] - embeddings_gt[:, :-1, :]  # shape (B, T-1, embed_dim)
 
             # Student forward
-            student_embeddings, logits = model(flow_frames)  # shape (B, 1, embed_dim)
+            student_embeddings, student_embeddings_for_distillation, logits = model(flow_frames)  # (B, T-1, embed_dim), (B, T-1, embed_dim), (B, num_classes)
 
             # Compute losses
-            # TODO: Meter MLP ente medias de student_embeddings y teacher_emb_diff como hacen en FROSTER
-            distill_loss = distillation_loss(student_embeddings, teacher_emb_diff, mode=distillation_loss_mode)
+            distill_loss = distillation_loss(student_embeddings_for_distillation, teacher_emb_diff, mode=distillation_loss_mode)
             class_loss = classification_loss(logits, labels)
 
             # TODO: Maybe add a balance factor
