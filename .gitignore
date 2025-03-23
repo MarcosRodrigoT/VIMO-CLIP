@@ -1,4 +1,5 @@
 checkpoints/
+*.h5
 
 venv/
 __pycache__/

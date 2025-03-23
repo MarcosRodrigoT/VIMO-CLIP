@@ -28,6 +28,7 @@ def train():
     distillation_loss_mode = "cosine"
     num_classes = 140
     grad_clip_norm = None
+    residual_alpha = 0.1
 
     # === Dataset paths ===
     train_hdf5_path = "/mnt/Data/enz/AnimalKingdom/action_recognition/dataset/ak_train_clip_vit32.h5"
@@ -38,7 +39,7 @@ def train():
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn_pad, num_workers=num_workers)
 
     # === Model, optimizer ===
-    model = FlowStudentModel(clip_model_name="ViT-B/32", device=device, num_classes=num_classes).to(device)
+    model = FlowStudentModel(clip_model_name="ViT-B/32", device=device, num_classes=num_classes, alpha=residual_alpha).to(device)
     model = torch.nn.DataParallel(model)
 
     optimizer = Adam(model.parameters(), lr=learning_rate)
@@ -59,16 +60,15 @@ def train():
             teacher_emb_diff = compute_embedding_differences(embeddings_gt)  # (B, T-1, embed_dim)
 
             # Student model forward
-            student_embeddings, logits = model(flow_videos)  # (B, T-1, embed_dim), (B, num_classes)
+            student_embeddings, student_embeddings_for_distillation, logits = model(flow_videos)  # (B, T-1, embed_dim), (B, num_classes)
 
-            if teacher_emb_diff.shape[1] != student_embeddings.shape[1]:
+            if teacher_emb_diff.shape[1] != student_embeddings_for_distillation.shape[1]:
                 print(f"Video: {batch['video_id']}")
-                print(f"Skipping mismatched batch! Teacher: {teacher_emb_diff.shape}, Student: {student_embeddings.shape}")
+                print(f"Skipping mismatched batch! Teacher: {teacher_emb_diff.shape}, Student: {student_embeddings_for_distillation.shape}")
                 continue
 
             # Compute losses
-            # TODO: Meter MLP ente medias de student_embeddings y teacher_emb_diff como hacen en FROSTER
-            distill_loss = distillation_loss(student_embeddings, teacher_emb_diff, mode=distillation_loss_mode)
+            distill_loss = distillation_loss(student_embeddings_for_distillation, teacher_emb_diff, mode=distillation_loss_mode)
             class_loss = classification_loss(logits, labels)
 
             # TODO: Maybe add a balance factor
