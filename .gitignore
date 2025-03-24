@@ -1,4 +1,5 @@
 checkpoints/
+logs/
 *.h5
 
 venv/
