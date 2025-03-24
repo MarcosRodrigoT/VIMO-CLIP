@@ -6,6 +6,7 @@ from models.student_model import FlowStudentModel
 from losses import distillation_loss, classification_loss
 import os
 from tqdm import tqdm
+from torch.utils.tensorboard import SummaryWriter
 
 
 def train():
@@ -34,6 +35,11 @@ def train():
     model = torch.nn.DataParallel(model)
 
     optimizer = Adam(model.parameters(), lr=learning_rate)
+
+    # === Create logs directory and TensorBoard writer ===
+    os.makedirs("logs", exist_ok=True)
+    writer = SummaryWriter(log_dir="logs")
+    global_step = 0
 
     # === Training loop ===
     for epoch in range(epochs):
@@ -72,18 +78,29 @@ def train():
             epoch_class_loss += class_loss.item()
             epoch_total_loss += total_loss.item()
 
+            # Write step-wise losses to TensorBoard
+            writer.add_scalar("Loss/Distillation", distill_loss.item(), global_step)
+            writer.add_scalar("Loss/Classification", class_loss.item(), global_step)
+            writer.add_scalar("Loss/Total", total_loss.item(), global_step)
+            global_step += 1
+
             progress_bar.set_postfix({"Distill Loss": f"{distill_loss.item():.4f}", "Class Loss": f"{class_loss.item():.4f}", "Total Loss": f"{total_loss.item():.4f}"})
 
-        # Logging after each epoch
+        # Compute epoch averages
         num_batches = len(train_loader)
-        avg_distill = epoch_distill_loss / num_batches
-        avg_class = epoch_class_loss / num_batches
-        avg_total = epoch_total_loss / num_batches
+        avg_distill_loss = epoch_distill_loss / num_batches
+        avg_class_loss = epoch_class_loss / num_batches
+        avg_total_loss = epoch_total_loss / num_batches
 
         print(f"\nEpoch [{epoch+1}/{epochs}] completed:")
-        print(f"Avg Distillation Loss: {avg_distill:.4f}")
-        print(f"Avg Classification Loss: {avg_class:.4f}")
-        print(f"Avg Total Loss: {avg_total:.4f}\n")
+        print(f"Avg Distillation Loss: {avg_distill_loss:.4f}")
+        print(f"Avg Classification Loss: {avg_class_loss:.4f}")
+        print(f"Avg Total Loss: {avg_total_loss:.4f}\n")
+
+        # Write epoch-wise losses to TensorBoard
+        writer.add_scalar("EpochLoss/Distillation", avg_distill_loss, epoch)
+        writer.add_scalar("EpochLoss/Classification", avg_class_loss, epoch)
+        writer.add_scalar("EpochLoss/Total", avg_total_loss, epoch)
 
         # Save checkpoint
         os.makedirs("checkpoints", exist_ok=True)
