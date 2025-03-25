@@ -15,12 +15,13 @@ def train():
     epochs = 30
     batch_size = 32
     num_workers = 4
-    learning_rate = 3e-4
+    learning_rate = 1e-3
     distillation_loss_mode = "cosine"
     num_classes = 140
     grad_clip_norm = None
     sequence_length = 30
     residual_alpha = 0.1
+    class_positive_weight = 9
 
     # === Dataset paths ===
     train_hdf5_path = "/mnt/Data/enz/AnimalKingdom/action_recognition/dataset/ak_train_clip_vit32.h5"
@@ -60,8 +61,10 @@ def train():
             student_embeddings, student_embeddings_for_distillation, logits = model(flow_frames)  # (B, T-1, embed_dim), (B, T-1, embed_dim), (B, num_classes)
 
             # Compute losses
-            distill_loss = distillation_loss(student_embeddings_for_distillation, teacher_emb_diff, mode=distillation_loss_mode)
-            class_loss = classification_loss(logits, labels)
+            # TODO: Changed distillation loss: From student_embeddings_for_distillation / teacher_emb_diff to student_embeddings_for_distillation / embeddings_gt[:, :-1, :]
+            #  We use embeddings_gt[:, :-1, :] so that it has the same shape as student_embeddings_for_distillation (we renive the last T frame)
+            distill_loss = distillation_loss(student_embeddings_for_distillation, embeddings_gt[:, :-1, :], mode=distillation_loss_mode)
+            class_loss = classification_loss(logits, labels, positive_weight=class_positive_weight)
 
             # TODO: Maybe add a balance factor
             total_loss = distill_loss + class_loss
