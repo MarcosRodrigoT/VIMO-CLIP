@@ -44,18 +44,27 @@ def distillation_loss(student_embeddings, teacher_embeddings, mode="mse"):
     return loss
 
 
-def classification_loss(predictions, targets):
+def classification_loss(predictions, targets, positive_weight=None):
     """
     Compute the binary cross-entropy loss for multi-label classification.
 
     Args:
         predictions (torch.Tensor): Predictions from the model (logits). Shape: (B, num_classes)
         targets (torch.Tensor): Ground truth labels. Shape: (B, num_classes)
+        positive_weight (int, optional): Weight value of the positive class
 
     Returns:
         torch.Tensor: Calculated binary cross-entropy loss (scalar).
     """
-    return F.binary_cross_entropy_with_logits(predictions, targets.float())
+    num_classes = predictions.shape[-1]
+
+    if positive_weight is not None:
+        # Create a tensor of shape (B, num_classes) like: [1, 1, 1, 1, POSITIVE_WEIGHT + 1, 1, 1, ...]
+        pos_weight = torch.full((num_classes,), positive_weight, device=predictions.device) * targets + 1
+    else:
+        pos_weight = None
+
+    return F.binary_cross_entropy_with_logits(predictions, targets.float(), pos_weight=pos_weight)
 
 
 def reconstruction_loss(reconstruction, input):
@@ -84,5 +93,5 @@ if __name__ == "__main__":
     pred_logits = torch.randn(8, 140)  # Example logits output from your model
     target_labels = torch.randint(0, 2, (8, 140)).float()  # Example ground truth labels
 
-    class_loss = classification_loss(pred_logits, target_labels)
+    class_loss = classification_loss(pred_logits, target_labels, positive_weight=None)
     print(f"Classification loss: {class_loss}")
