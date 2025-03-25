@@ -90,7 +90,6 @@ class FlowStudentModel(nn.Module):
         embeddings_for_distillation = self.residual_mlp(embeddings)  # shape (B, T, embed_dim)
 
         # Mean pooling across temporal dimension
-        # TODO: Tengo que corregir esto y volver a lanzar el entrenamiento!! Checkear la Figura 3 del paper, utilizan los embeddings para L_CE y no los embeddings_for_distillation
         pooled_embeddings = embeddings.mean(dim=1)
 
         # Compute logits for classification (float32 precision)
