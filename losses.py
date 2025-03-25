@@ -34,7 +34,10 @@ def distillation_loss(student_embeddings, teacher_embeddings, mode="mse"):
         cosine_sim = cosine_sim.clamp(-1 + epsilon, 1 - epsilon)
 
         # Compute loss
-        loss = 1 - cosine_sim.mean()
+        # TODO: We can choose one from these
+        # loss = 1 - cosine_sim.mean()  -> This produces stale results (always close to 1), as a "-0.1" may cancel out with a "0.1"
+        # loss = (1 - cosine_sim).sum()
+        loss = (1 - cosine_sim).mean()
     else:
         raise ValueError(f"Unsupported mode '{mode}'. Choose 'mse' or 'cosine'.")
 
