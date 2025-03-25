@@ -7,6 +7,7 @@ from losses import distillation_loss, classification_loss
 import os
 from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
+from datetime import datetime
 
 
 def compute_embedding_differences(embeddings):
@@ -47,8 +48,10 @@ def train():
     optimizer = Adam(model.parameters(), lr=learning_rate)
 
     # === Create logs directory and TensorBoard writer ===
-    os.makedirs("logs", exist_ok=True)
-    writer = SummaryWriter(log_dir="logs")
+    run_name = datetime.now().strftime("%Y%m%d-%H%M%S")  # e.g., "20231105-183122"
+    log_dir = f"logs/{run_name}"
+    os.makedirs(log_dir, exist_ok=True)
+    writer = SummaryWriter(log_dir=log_dir)
     global_step = 0
 
     # === Training loop ===
@@ -120,9 +123,18 @@ def train():
         writer.add_scalar("EpochLoss/Classification", avg_class_loss, epoch)
         writer.add_scalar("EpochLoss/Total", avg_total_loss, epoch)
 
+        # Log last batch’s logits & labels for this epoch
+        logits_text = str(logits)  # round for readability
+        labels_text = str(labels)
+        writer.add_text("Logits/LastBatch", logits_text, epoch)
+        writer.add_text("Labels/LastBatch", labels_text, epoch)
+        writer.add_histogram("Logits/LastBatch", logits, epoch)
+        writer.add_histogram("Labels/LastBatch", labels, epoch)
+
         # Save checkpoint every epoch
-        os.makedirs("checkpoints", exist_ok=True)
-        torch.save(model.state_dict(), f"checkpoints/student_epoch_{epoch+1}.pth")
+        ckpt_dir = f"checkpoints/{run_name}"
+        os.makedirs(ckpt_dir, exist_ok=True)
+        torch.save(model.state_dict(), f"{ckpt_dir}/student_epoch_{epoch+1}.pth")
 
     # === Close the writer at the end of training ===
     writer.close()
