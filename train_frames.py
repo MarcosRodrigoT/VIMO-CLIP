@@ -19,8 +19,8 @@ def evaluate(model, val_loader, device, distillation_loss_mode, class_positive_w
 
     with torch.no_grad():
         for batch in val_bar:
-            embeddings_gt = batch["embeddings"].to(device)
-            flow_videos = batch["flow_video"].to(device)
+            embeddings_gt = batch["rgb_emb"].to(device)
+            flow_videos = batch["flow_frames"].to(device)
             labels = batch["labels"].to(device)
 
             # Forward
