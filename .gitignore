@@ -1,5 +1,6 @@
 checkpoints/
 logs/
+paper_images/
 *.h5
 
 venv/
