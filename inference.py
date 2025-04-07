@@ -79,7 +79,7 @@ def main(flow_videos_dir, output_h5_path, checkpoint_dir, clip_model_name, batch
     model = torch.nn.DataParallel(model)
 
     # === Load latest checkpoint ===
-    ckpt_path = latest_checkpoint(checkpoint_dir)
+    ckpt_path = os.path.join(checkpoint_dir, "student_best.pth")
     print(f"Loading checkpoint: {ckpt_path}")
     checkpoint = torch.load(ckpt_path, map_location=device)
     model.load_state_dict(checkpoint, strict=True)
@@ -119,7 +119,7 @@ if __name__ == "__main__":
     # Hyperparameters
     FLOW_VIDEOS_DIR = "/mnt/Data/enz/AnimalKingdom/action_recognition/dataset/flows"
     OUTPUT_H5_PATH = "./flow_embeddings.h5"
-    CHECKPOINT_DIR = "./checkpoints"
+    CHECKPOINT_DIR = "./checkpoints/20250328-003544 - best"
     CLIP_MODEL_NAME = "ViT-B/32"
     BATCH_SIZE = 1  # videos per batch
     NUM_WORKERS = 20
