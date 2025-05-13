@@ -1,0 +1,27 @@
+testing:
+  seed: 0
+  batch_size: 1
+  num_workers: 4
+  device: "cuda:0"
+  checkpoint_dir: "config_3/checkpoints/20250401-115653"
+
+data:
+  num_classes: 140
+  class_names_dir: "/mnt/Data/enz/AnimalKingdom/action_recognition/annotation/ak_action.csv"
+  val_dataset_path:   "/mnt/Data/enz/AnimalKingdom/action_recognition/dataset/ak_val_clip_vit16.h5"
+  flow_dataset_path:  "/mnt/Data/enz/AnimalKingdom/action_recognition/dataset/flow_embeddings_Atenea_20250325-225147.h5"
+  output: "animal_class_results.csv"
+
+model:
+  d_model: 512
+  nhead: 8
+  num_layers: 4
+  dim_feedforward: 2048
+  use_cross_attention: true
+  use_only_rgb: false
+  use_only_flow: false
+  use_pe: false
+  concat_dim: 1
+  dropout: 0.1
+  mlp_dropout: 0.1
+
