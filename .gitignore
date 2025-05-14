@@ -2,6 +2,7 @@ checkpoints/
 logs/
 paper_images/
 *.h5
+*.log
 
 venv/
 __pycache__/
