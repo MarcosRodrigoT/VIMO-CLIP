@@ -16,8 +16,8 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from torchmetrics.classification import MultilabelAveragePrecision
 from tqdm import tqdm
-from data.dataset import HDF5VideoDataset, collate_fn_pad
-from models.AMO_CLIP_wo_mask import AMO_CLIP
+from data import HDF5VideoDataset, collate_fn_pad
+from models import AMO_CLIP_WO_MASK
 from datetime import datetime
 
 
@@ -383,7 +383,7 @@ if __name__ == "__main__":
     val_loader = DataLoader(val_dataset, batch_size=config.batch_size, collate_fn=collate_fn_pad, num_workers=config.num_workers, drop_last=True)
 
     # Initialize model
-    model = AMO_CLIP(
+    model = AMO_CLIP_WO_MASK(
         d_model=config.d_model,
         nhead=config.nhead,
         num_layers=config.num_layers,

@@ -51,7 +51,7 @@ class AttentionLayer(nn.Module):
         return x
 
 
-class AMO_CLIP(nn.Module):
+class AMO_CLIP_WO_MASK(nn.Module):
     def __init__(
         self,
         d_model=512,

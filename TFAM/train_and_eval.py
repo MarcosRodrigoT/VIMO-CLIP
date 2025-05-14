@@ -16,8 +16,8 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from torchmetrics.classification import MultilabelAveragePrecision
 from tqdm import tqdm
-from data.dataset import HDF5VideoDataset, collate_fn_pad
-from models.AMO_CLIP import AMO_CLIP
+from data import HDF5VideoDataset, collate_fn_pad
+from models import AMO_CLIP
 from datetime import datetime
 
 
