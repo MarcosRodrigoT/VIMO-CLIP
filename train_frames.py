@@ -1,7 +1,7 @@
 import torch
 from torch.utils.data import DataLoader
 from torch.optim import Adam
-from dataset_frames import HDF5VideoDataset, collate_fn
+from dataset import HDF5VideoDataset, collate_fn
 from models.student_model import FlowStudentModel
 from losses import distillation_loss, classification_loss
 import os

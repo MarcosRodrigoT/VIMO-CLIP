@@ -3,156 +3,178 @@ import h5py
 import torch
 import torchvision.io as io
 from torch.utils.data import Dataset, DataLoader
-from torch.nn.utils.rnn import pad_sequence
-
-
-def sparse_sampling(embeddings, num_frames):
-    """
-    Perform sparse sampling on the embeddings.
-    Args:
-        embeddings (torch.Tensor): Tensor of shape (T, embed_dim) for T frames.
-        num_frames (int): Desired number of frames to sample.
-
-    Returns:
-        torch.Tensor: Sampled embeddings, shape (num_frames, embed_dim).
-    """
-    total_frames = embeddings.shape[0]
-
-    if total_frames > num_frames:
-        indices = torch.linspace(0, total_frames - 1, num_frames).long()
-        embeddings = embeddings[indices]
-
-    return embeddings
 
 
 class HDF5VideoDataset(Dataset):
     """
-    Loads CLIP embeddings from an HDF5 file. Each video is stored as a group:
-      - "embeddings": (T, embed_dim) tensor of frame embeddings
-      - "labels": (C,) tensor of labels
-    Optionally performs sparse sampling of frames and applies a transform.
-
-    Args:
-        hdf5_path (str): Path to the HDF5 file.
-        transform (callable, optional): Transform to apply to the embeddings.
-        num_frames (int, optional): If set, performs sparse sampling to this number of frames.
-        max_frames (int, optional): If set, skip dataset videos that exceed this number of frames.
+    This dataset splits each video into non-overlapping consecutive segments of length `sequence_length`.
+    If the last segment is shorter, it is padded up to `sequence_length`.
+    Each segment yields:
+      - "video_id": str
+      - "rgb_emb": shape (sequence_length, embed_dim)
+      - "flow_frames": shape (sequence_length - 1, C, H, W)
+      - "labels": shape (C,)
     """
 
-    def __init__(self, clip_embeddings_dir, flow_videos_dir, transform=None, num_frames=None, max_frames=None):
+    def __init__(self, clip_embeddings_dir, flow_videos_dir, sequence_length=2, transform=None):
+        """
+        Args:
+            clip_embeddings_dir (str): Path to HDF5 with RGB CLIP embeddings
+            flow_videos_dir (str): Directory with optical flow videos
+            sequence_length (int): Number of consecutive frames to sample as one segment
+            transform (callable, optional): Optional transform on the RGB embeddings
+        """
+        super().__init__()
         self.hdf5_path = clip_embeddings_dir
         self.flow_videos_dir = flow_videos_dir
+        self.sequence_length = sequence_length
         self.transform = transform
-        self.num_frames = num_frames
-        self.max_frames = max_frames
 
-        # Collect the keys (video IDs) from the HDF5 file.
+        # Build a list of (video_id, start_idx, seg_len) for all segments
+        self.segments = []  # will hold (video_id, start_idx, seg_len) tuples
         with h5py.File(self.hdf5_path, "r") as f:
             all_keys = list(f.keys())
 
-            # Skip videos if they exceed max_frames
-            if self.max_frames is not None:
-                filtered_keys = []
-                for k in all_keys:
-                    # Check the number of frames in the embeddings
-                    if f[k]["embeddings"].shape[0] <= self.max_frames:
-                        filtered_keys.append(k)
-                self.keys = filtered_keys
-            else:
-                self.keys = all_keys
+            for k in all_keys:
+                # "embeddings" => shape (T, embed_dim)
+                T = f[k]["embeddings"].shape[0]
+
+                if T == 0:
+                    # no frames => skip or do a single fully-padded segment
+                    continue
+
+                # We'll chunk the video in steps of 'sequence_length', but the last chunk
+                # might have leftover. If leftover < sequence_length, we do a single padded chunk.
+                start = 0
+                while start < T:
+                    remaining = T - start
+                    if remaining >= self.sequence_length:
+                        seg_len = self.sequence_length
+                    else:
+                        # leftover < sequence_length => we'll do one padded chunk
+                        seg_len = remaining
+                    self.segments.append((k, start, seg_len))
+                    start += seg_len  # jump forward seg_len
 
     def __len__(self):
-        return len(self.keys)
+        # The total number of consecutive segments we have
+        return len(self.segments)
 
     def __getitem__(self, idx):
-        # Open the file (read‐only) and access the group for the given video.
+        """
+        Return the idx-th segment in self.segments, padded if needed.
+        """
+        video_id, start_idx, seg_len = self.segments[idx]
+
+        # Load embeddings & labels from HDF5
         with h5py.File(self.hdf5_path, "r") as f:
-            video_id = self.keys[idx]
             group = f[video_id]
+            embeddings = torch.from_numpy(group["embeddings"][:])  # (T, embed_dim)
+            labels = torch.from_numpy(group["labels"][:])  # (C,)
 
-            # Load embeddings and labels
-            embeddings = torch.from_numpy(group["embeddings"][:])  # shape (T, embed_dim)
-            labels = torch.from_numpy(group["labels"][:])  # shape (C,)
+        T = embeddings.shape[0]
+        # Extract the segment => shape (seg_len, embed_dim)
+        rgb_seq = embeddings[start_idx : start_idx + seg_len]
 
-            # If a specific number of frames is requested, do sparse sampling.
-            if self.num_frames:
-                embeddings = sparse_sampling(embeddings, self.num_frames)
+        # Pad if seg_len < sequence_length
+        leftover = self.sequence_length - seg_len
+        if leftover > 0:
+            # repeat the last frame or zero
+            if seg_len > 0:
+                last_frame = rgb_seq[-1:].clone()
+                pad = last_frame.repeat(leftover, 1)
+            else:
+                # seg_len=0 => T was 0, which we'd normally skip above
+                # but let's handle edge case anyway
+                embed_dim = embeddings.shape[1]
+                pad = torch.zeros((leftover, embed_dim))
+            rgb_seq = torch.cat([rgb_seq, pad], dim=0)  # now shape => (sequence_length, embed_dim)
 
-            # Optionally apply a transform (e.g., normalization) on the embeddings.
-            if self.transform:
-                embeddings = self.transform(embeddings)
+        if self.transform:
+            rgb_seq = self.transform(rgb_seq)
 
-            # Load corresponding optical flow video
-            flow_video_path = os.path.join(self.flow_videos_dir, video_id)
-            flow_video, _, _ = io.read_video(flow_video_path, pts_unit="sec")  # shape: (T, H, W, C)
-            flow_video = flow_video.permute(0, 3, 1, 2)  # (T, C, H, W)
+        # Load optical flow video => (T_flow, C, H, W)
+        flow_video_path = os.path.join(self.flow_videos_dir, video_id)
+        flow_video, _, _ = io.read_video(flow_video_path, pts_unit="sec")
+        flow_video = flow_video.permute(0, 3, 1, 2)  # => (T_flow, C, H, W)
 
-            if self.num_frames and flow_video.size(0) > self.num_frames:
-                indices = torch.linspace(0, flow_video.size(0) - 1, self.num_frames).long()
-                flow_video = flow_video[indices]
+        T_flow = flow_video.shape[0]
+        # The corresponding flow segment has length = (seg_len - 1), or (sequence_length - 1) if padded
+        flow_seg_len = seg_len - 1
+        if leftover > 0:
+            # If we padded seg_len => full seg len is self.sequence_length
+            flow_seg_len = self.sequence_length - 1
 
-            return {
-                "video_id": video_id,
-                "embeddings": embeddings,
-                "labels": labels,
-                "flow_video": flow_video,
-                "total_frames": embeddings.shape[0],
-            }
+        flow_start = start_idx
+        flow_end = start_idx + flow_seg_len  # not inclusive
+
+        # clamp if out of range
+        flow_start = min(flow_start, max(T_flow - 1, 0))
+        flow_end = min(flow_end, T_flow)
+
+        flow_seq = flow_video[flow_start:flow_end]  # shape => (flow_seg_len, C, H, W)
+
+        needed = flow_seg_len - flow_seq.shape[0]
+        if needed > 0:
+            # pad flow frames
+            if flow_seq.shape[0] > 0:
+                last_flow = flow_seq[-1:].clone()  # shape => (1, C, H, W)
+                pad_flow = last_flow.repeat(needed, 1, 1, 1)
+            else:
+                # no frames => create zeros
+                C, H, W = flow_video.shape[1], flow_video.shape[2], flow_video.shape[3]
+                pad_flow = torch.zeros((needed, C, H, W))
+            flow_seq = torch.cat([flow_seq, pad_flow], dim=0)
+
+        return {
+            "video_id": video_id,
+            "rgb_emb": rgb_seq,  # (sequence_length, embed_dim)
+            "flow_frames": flow_seq,  # (sequence_length - 1, C, H, W)
+            "labels": labels,  # (C,)
+        }
 
 
-def collate_fn_pad(batch):
-    """
-    Collate function to pad variable-length embeddings sequences.
-    Returns a dict with padded embeddings, labels, lengths, and video IDs.
-    """
-    # Separate components
-    embeddings_list = [item["embeddings"] for item in batch]  # list of (T_i, embed_dim)
-    flow_videos_list = [item["flow_video"] for item in batch]
-
-    labels = torch.stack([item["labels"] for item in batch])  # shape (B, C)
-    lengths = torch.tensor([emb.shape[0] for emb in embeddings_list])  # (B,)
-
-    # Pad embeddings along the time dimension
-    padded_embeddings = pad_sequence(embeddings_list, batch_first=True)
-    padded_flow_videos = pad_sequence(flow_videos_list, batch_first=True)
+def collate_fn(samples):
+    video_ids = [s["video_id"] for s in samples]
+    rgb_seq = torch.stack([s["rgb_emb"] for s in samples], dim=0)  # (B, seq_len, embed_dim)
+    flow_seq = torch.stack([s["flow_frames"] for s in samples], dim=0)  # (B, seq_len-1, C, H, W)
+    labels = torch.stack([s["labels"] for s in samples], dim=0)
 
     return {
-        "video_id": [item["video_id"] for item in batch],
-        "embeddings": padded_embeddings,
-        "flow_video": padded_flow_videos,
+        "video_id": video_ids,
+        "rgb_emb": rgb_seq,
+        "flow_frames": flow_seq,
         "labels": labels,
-        "lengths": lengths,
     }
 
 
 def check_data_loading(dataloader):
     """
-    Fetches a single batch from the DataLoader and prints shape/type info
-    for verification.
+    Grab a single batch and print shape/info
     """
     data_iter = iter(dataloader)
     batch = next(data_iter)
 
-    print(f"Batch keys: {batch.keys()}")
-    print(f"video_id (list): {batch['video_id']}")
-    print(f"embeddings shape: {batch['embeddings'].shape}")
-    print(f"flow_video shape: {batch['flow_video'].shape}")
-    print(f"labels shape: {batch['labels'].shape}")
-    print(f"lengths: {batch['lengths']}")
+    print("Batch keys:", batch.keys())
+    print("video_id:", batch["video_id"])
+    print("rgb_emb shape:", batch["rgb_emb"].shape)  # (B, seq_len, embed_dim)
+    print("flow_frames shape:", batch["flow_frames"].shape)  # (B, seq_len-1, C, H, W)
+    print("labels shape:", batch["labels"].shape)  # (B, C)
 
 
 if __name__ == "__main__":
     # Hyperparameters
     BATCH_SIZE = 8
     NUM_WORKERS = 4
+    SEQUENCE_LENGTH = 10
 
     # Paths to HDF5 files containing CLIP embeddings for training and path to optical flow videos directory
     train_hdf5_path = "/mnt/Data/enz/AnimalKingdom/action_recognition/dataset/ak_train_clip_vit32.h5"
     flow_videos_dir = "/mnt/Data/enz/AnimalKingdom/action_recognition/dataset/flows"
 
     # Create dataset and DataLoader
-    train_dataset = HDF5VideoDataset(train_hdf5_path, flow_videos_dir, num_frames=None, max_frames=500)
-    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, collate_fn=collate_fn_pad, num_workers=NUM_WORKERS)
+    train_dataset = HDF5VideoDataset(clip_embeddings_dir=train_hdf5_path, flow_videos_dir=flow_videos_dir, sequence_length=SEQUENCE_LENGTH)
+    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, collate_fn=collate_fn, num_workers=NUM_WORKERS)
 
     # Verify the data loading process
     check_data_loading(train_loader)

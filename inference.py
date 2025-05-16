@@ -2,7 +2,6 @@ import os
 import glob
 import torch
 import h5py
-import numpy as np
 import torchvision.transforms as transforms
 from torch.utils.data import DataLoader, Dataset
 from torchvision.io import read_video
