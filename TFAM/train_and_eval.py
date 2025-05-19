@@ -25,9 +25,6 @@ from datetime import datetime
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s", handlers=[logging.FileHandler("training.log"), logging.StreamHandler()])
 
 
-# ------------------------------------------------
-# Set random seed function
-# ------------------------------------------------
 def set_seed(seed: int = 0):
     """
     Fixes random seeds for reproducibility.
@@ -41,9 +38,6 @@ def set_seed(seed: int = 0):
     # torch.backends.cudnn.benchmark = False
 
 
-# -----------------------------------------------------------------------------
-# Model Trainer
-# -----------------------------------------------------------------------------
 class ModelTrainer:
     def __init__(self, model, train_loader, val_loader, config):
         self.model = model.to(config.device)
@@ -178,9 +172,6 @@ class ModelTrainer:
         logging.info(f"Entrenamiento completo en {(time.time() - start_time)/60:.2f} minutos")
 
 
-# -----------------------------------------------------------------------------
-# Model Tester
-# -----------------------------------------------------------------------------
 class ModelTester:
     def __init__(self, model, val_loader, config):
         self.model = model.to(config.device)
@@ -319,9 +310,6 @@ class Config:
     pass
 
 
-# -----------------------------------------------------------------------------
-# Main
-# -----------------------------------------------------------------------------
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Entrenar y/o evaluar modelo de video")
     parser.add_argument("--config", type=str, default="config_default.yaml", help="Ruta al archivo de configuración (YAML)")
@@ -337,12 +325,12 @@ if __name__ == "__main__":
     data_cfg = cfg["data"]
     model_cfg = cfg["model"]
 
-    # Example usage:
     config = Config()
+
+    # Train config
     config.mode = train_cfg["mode"]
     config.seed = train_cfg["seed"]
     set_seed(config.seed)
-
     config.lr = train_cfg["lr"]
     config.epochs = train_cfg["epochs"]
     config.batch_size = train_cfg["batch_size"]
@@ -350,15 +338,18 @@ if __name__ == "__main__":
     config.device_str = train_cfg["device"]
     config.device = torch.device(config.device_str if torch.cuda.is_available() else "cpu")
 
+    # Log config
     config.log_dir = log_cfg["log_dir"]
     config.checkpoint_dir = log_cfg["checkpoint_dir"]
 
+    # Data config
     config.num_classes = data_cfg["num_classes"]
     config.class_names_dir = data_cfg["class_names_dir"]
     config.train_dataset_path = data_cfg["train_dataset_path"]
     config.val_dataset_path = data_cfg["val_dataset_path"]
     config.flow_dataset_path = data_cfg["flow_dataset_path"]
 
+    # Model config
     config.d_model = model_cfg["d_model"]
     config.nhead = model_cfg["nhead"]
     config.num_layers = model_cfg["num_layers"]

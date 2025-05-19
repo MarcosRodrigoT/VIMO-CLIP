@@ -7,9 +7,9 @@ testing:
 
 data:
   num_classes: 140
-  class_names_dir: "/mnt/Data/enz/AnimalKingdom/action_recognition/annotation/ak_action.csv"
-  val_dataset_path:   "/mnt/Data/enz/AnimalKingdom/action_recognition/dataset/ak_val_clip_vit16.h5"
-  flow_dataset_path:  "/mnt/Data/enz/AnimalKingdom/action_recognition/dataset/flow_embeddings_Atenea_20250325-225147.h5"
+  class_names_dir: "dataset/annotation/ak_action.csv"
+  val_dataset_path:   "dataset/embeddings/val_clip_embeddings.h5"
+  flow_dataset_path:  "dataset/embeddings/flow_embeddings.h5"
   output: "animal_class_results.csv"
 
 model:

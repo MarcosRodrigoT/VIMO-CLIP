@@ -1,3 +1,4 @@
+import argparse
 import torch
 from torch.utils.data import DataLoader
 from torch.optim import Adam
@@ -48,37 +49,21 @@ def evaluate(model, val_loader, device, distillation_loss_mode, class_positive_w
     return distill_loss_avg, class_loss_avg, total_loss_avg
 
 
-def train():
+def train(args):
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    epochs = 10
-    batch_size = 32
-    num_workers = 4
-    learning_rate = 1e-3
-    distillation_loss_mode = "cosine"
-    num_classes = 140
-    grad_clip_norm = None
-    sequence_length = 30
-    residual_alpha = 0.1
-    class_positive_weight = 9
-
-    # === Dataset paths ===
-    train_hdf5_path = "/mnt/Data/enz/AnimalKingdom/action_recognition/dataset/ak_train_clip_vit32.h5"
-    val_hdf5_path = "/mnt/Data/enz/AnimalKingdom/action_recognition/dataset/ak_val_clip_vit32.h5"
-    flow_videos_dir = "/mnt/Data/enz/AnimalKingdom/action_recognition/dataset/flows"
-
     # === Dataset and DataLoader ===
-    train_dataset = HDF5VideoDataset(clip_embeddings_dir=train_hdf5_path, flow_videos_dir=flow_videos_dir, sequence_length=sequence_length)
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn, num_workers=num_workers)
+    train_dataset = HDF5VideoDataset(clip_embeddings_dir=args.train_hdf5_path, flow_videos_dir=args.flow_videos_dir, sequence_length=args.sequence_length)
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, collate_fn=collate_fn, num_workers=args.num_workers)
 
-    val_dataset = HDF5VideoDataset(clip_embeddings_dir=val_hdf5_path, flow_videos_dir=flow_videos_dir, sequence_length=sequence_length)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn, num_workers=num_workers)
+    val_dataset = HDF5VideoDataset(clip_embeddings_dir=args.val_hdf5_path, flow_videos_dir=args.flow_videos_dir, sequence_length=args.sequence_length)
+    val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn, num_workers=args.num_workers)
 
     # === Model, optimizer ===
-    model = FlowStudentModel(clip_model_name="ViT-B/32", device=device, num_classes=num_classes, alpha=residual_alpha).to(device)
+    model = FlowStudentModel(clip_model_name="ViT-B/32", device=device, num_classes=args.num_classes, alpha=args.residual_alpha).to(device)
     model = torch.nn.DataParallel(model)
 
-    optimizer = Adam(model.parameters(), lr=learning_rate)
+    optimizer = Adam(model.parameters(), lr=args.learning_rate)
 
     # === Logging & checkpoint setup ===
     run_name = datetime.now().strftime("%Y%m%d-%H%M%S")  # e.g., "20231105-183122"
@@ -94,12 +79,12 @@ def train():
     best_val_loss = float("inf")  # track best val total loss
 
     # === Training loop ===
-    for epoch in range(epochs):
+    for epoch in range(args.epochs):
         model.train()
         epoch_distill_loss, epoch_class_loss, epoch_total_loss = 0.0, 0.0, 0.0
 
         # Training progress bar
-        train_bar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs} (Train)")
+        train_bar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{args.epochs} (Train)")
 
         for batch in train_bar:
             embeddings_gt = batch["rgb_emb"].to(device)  # shape (B, T, embed_dim)
@@ -110,19 +95,15 @@ def train():
             student_embeddings, student_embeddings_for_distillation, logits = model(flow_frames)  # (B, T-1, embed_dim), (B, T-1, embed_dim), (B, num_classes)
 
             # Compute losses
-            # TODO: Changed distillation loss: From student_embeddings_for_distillation / teacher_emb_diff to student_embeddings_for_distillation / embeddings_gt[:, :-1, :]
-            #  We use embeddings_gt[:, :-1, :] so that it has the same shape as student_embeddings_for_distillation (we renive the last T frame)
-            distill_loss = distillation_loss(student_embeddings_for_distillation, embeddings_gt[:, :-1, :], mode=distillation_loss_mode)
-            class_loss = classification_loss(logits, labels, positive_weight=class_positive_weight)
-
-            # TODO: Maybe add a balance factor
+            distill_loss = distillation_loss(student_embeddings_for_distillation, embeddings_gt[:, :-1, :], mode=args.distillation_loss_mode)
+            class_loss = classification_loss(logits, labels, positive_weight=args.class_positive_weight)
             total_loss = distill_loss + class_loss
 
             # Backward and optimization step
             optimizer.zero_grad()
             total_loss.backward()
-            if grad_clip_norm is not None:
-                torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip_norm)
+            if args.grad_clip_norm is not None:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip_norm)
             optimizer.step()
 
             # Accumulate losses for logging
@@ -150,8 +131,8 @@ def train():
             model=model,
             val_loader=val_loader,
             device=device,
-            distillation_loss_mode=distillation_loss_mode,
-            class_positive_weight=class_positive_weight,
+            distillation_loss_mode=args.distillation_loss_mode,
+            class_positive_weight=args.class_positive_weight,
         )
 
         # === Logging epoch-level results ===
@@ -172,7 +153,7 @@ def train():
         writer.add_histogram("Labels/LastBatch", labels, epoch)
 
         # Print epoch results
-        print(f"\nEpoch [{epoch + 1}/{epochs}] completed:")
+        print(f"\nEpoch [{epoch + 1}/{args.epochs}] completed:")
         print("Training results:")
         print(f"- Avg Distillation Loss: {avg_train_dist:.4f}")
         print(f"- Avg Classification Loss: {avg_train_class:.4f}")
@@ -195,4 +176,41 @@ def train():
 
 
 if __name__ == "__main__":
-    train()
+    parser = argparse.ArgumentParser(description="Train flow-only student model")
+
+    # Core training hyper-parameters
+    parser.add_argument("--epochs", type=int, default=10, help="Total number of training epochs.")
+    parser.add_argument("--batch-size", type=int, default=32, help="Mini-batch size.")
+    parser.add_argument("--num-workers", type=int, default=4, help="Worker processes used by the DataLoader.")
+    parser.add_argument("--learning-rate", type=float, default=1e-3, help="Initial learning rate for the optimizer.")
+    parser.add_argument("--grad-clip-norm", type=float, default=None, help="Clip gradient L2-norm to this value (disabled if None).")
+
+    # Model / loss settings
+    parser.add_argument("--distillation-loss-mode", type=str, default="cosine", choices=["cosine", "mse"], help="Similarity metric used for the distillation loss.")
+    parser.add_argument("--num-classes", type=int, default=140, help="Number of action classes in the dataset.")
+    parser.add_argument("--sequence-length", type=int, default=30, help="Number of frames per video clip passed to the model.")
+    parser.add_argument("--residual-alpha", type=float, default=0.1, help="Scaling factor for the residual connection in the student model.")
+    parser.add_argument("--class-positive-weight", type=float, default=9, help="Positive-class weight for the BCE classification loss.")
+
+    # Dataset paths
+    parser.add_argument(
+        "--train-hdf5-path",
+        type=str,
+        default="dataset/embeddings/train_clip_embeddings.h5",
+        help="Path to the HDF5 file with CLIP embeddings for the training split.",
+    )
+    parser.add_argument(
+        "--val-hdf5-path",
+        type=str,
+        default="dataset/embeddings/val_clip_embeddings.h5",
+        help="Path to the HDF5 file with CLIP embeddings for the validation split.",
+    )
+    parser.add_argument(
+        "--flow-videos-dir",
+        type=str,
+        default="dataset/flows",
+        help="Directory containing optical-flow frame folders.",
+    )
+
+    args = parser.parse_args()
+    train(args)

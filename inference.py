@@ -2,6 +2,7 @@ import os
 import glob
 import torch
 import h5py
+import argparse
 import torchvision.transforms as transforms
 from torch.utils.data import DataLoader, Dataset
 from torchvision.io import read_video
@@ -63,22 +64,23 @@ def read_and_transform_video(video_path, device, clip_transform):
     return torch.stack(frames_processed, dim=0).to(device)
 
 
-def main(flow_videos_dir, output_h5_path, checkpoint_dir, clip_model_name, batch_size, num_workers, num_classes):
+# def main(flow_videos_dir, output_h5_path, checkpoint_dir, clip_model_name, batch_size, num_workers, num_classes):
+def main(args):
     device = "cuda" if torch.cuda.is_available() else "cpu"
     # We'll store all embeddings in one HDF5 file
-    if os.path.exists(output_h5_path):
-        os.remove(output_h5_path)  # overwrite if desired
+    if os.path.exists(args.output_h5_path):
+        os.remove(args.output_h5_path)  # overwrite if desired
 
     # === Dataset and DataLoader ===
-    dataset = FlowVideoDataset(flow_videos_dir)
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
+    dataset = FlowVideoDataset(args.flow_videos_dir)
+    dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
 
     # === Model ===
-    model = FlowStudentModel(clip_model_name=clip_model_name, device=device, num_classes=num_classes).to(device)
+    model = FlowStudentModel(clip_model_name=args.clip_model_name, device=device, num_classes=args.num_classes).to(device)
     model = torch.nn.DataParallel(model)
 
     # === Load latest checkpoint ===
-    ckpt_path = os.path.join(checkpoint_dir, "student_best.pth")
+    ckpt_path = os.path.join(args.checkpoint_dir, "student_best.pth")
     print(f"Loading checkpoint: {ckpt_path}")
     checkpoint = torch.load(ckpt_path, map_location=device)
     model.load_state_dict(checkpoint, strict=True)
@@ -89,7 +91,7 @@ def main(flow_videos_dir, output_h5_path, checkpoint_dir, clip_model_name, batch
 
     # === Inference & Save to .h5 ===
     # We'll store one group per video in the .h5 file
-    with h5py.File(output_h5_path, "w") as h5f:
+    with h5py.File(args.output_h5_path, "w") as h5f:
         with torch.no_grad():
             for batch_paths in dataloader:
                 for video_path in batch_paths:
@@ -111,25 +113,25 @@ def main(flow_videos_dir, output_h5_path, checkpoint_dir, clip_model_name, batch
 
                     print(f"[{video_id}] shape={embeddings.shape} => saved to group '{video_id}'.")
 
-    print(f"Inference complete! Flow embeddings saved to: {output_h5_path}")
+    print(f"Inference complete! Flow embeddings saved to: {args.output_h5_path}")
 
 
 if __name__ == "__main__":
-    # Hyperparameters
-    FLOW_VIDEOS_DIR = "/mnt/Data/enz/AnimalKingdom/action_recognition/dataset/flows"
-    OUTPUT_H5_PATH = "./flow_embeddings.h5"
-    CHECKPOINT_DIR = "./checkpoints/20250328-003544 - best"
-    CLIP_MODEL_NAME = "ViT-B/32"
-    BATCH_SIZE = 1  # videos per batch
-    NUM_WORKERS = 20
-    NUM_CLASSES = 140
+    parser = argparse.ArgumentParser(description="Extract flow-only CLIP embeddings with a trained FlowStudentModel (MoCLIP)")
 
-    main(
-        flow_videos_dir=FLOW_VIDEOS_DIR,
-        output_h5_path=OUTPUT_H5_PATH,
-        checkpoint_dir=CHECKPOINT_DIR,
-        clip_model_name=CLIP_MODEL_NAME,
-        batch_size=BATCH_SIZE,
-        num_workers=NUM_WORKERS,
-        num_classes=NUM_CLASSES,
-    )
+    # Paths
+    parser.add_argument("--flow-videos-dir", type=str, default="dataset/flows", help="Root directory containing flow-frame videos.")
+    parser.add_argument("--output-h5-path", type=str, default="dataset/embeddings/flow_embeddings.h5", help="Destination .h5 file for embeddings.")
+    parser.add_argument("--checkpoint-dir", type=str, default="checkpoints/20250328-003544", help="Folder with the trained student checkpoint 'student_best.pth'.")
+    parser.add_argument("--clip-model-name", type=str, default="ViT-B/32", help="Name of the CLIP visual backbone (same as used in training).")
+
+    # Dataloader settings
+    parser.add_argument("--batch-size", type=int, default=1, help="Videos per inference batch.")
+    parser.add_argument("--num-workers", type=int, default=20, help="PyTorch DataLoader worker processes.")
+
+    # Model metadata
+    parser.add_argument("--num-classes", type=int, default=140, help="Number of classes the student was trained for.")
+
+    args = parser.parse_args()
+
+    main(args)
