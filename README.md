@@ -1,6 +1,6 @@
 # ViMoCLIP: Video Motion CLIP for Animal Action Recognition
 
-[![Paper](https://img.shields.io/badge/Paper-CVPR_2025_Workshop-4b44ce)](docs/ViMoCLIP_CVPR25.pdf)
+[![Paper](https://img.shields.io/badge/Paper-CVPR_2025_Workshop-4b44ce)](assets/ViMoCLIP.pdf)
 
 ViMoCLIP is the official PyTorch implementation of our CVPR 2025 Workshop paper **“ViMoCLIP: Augmenting Static CLIP Representations with Video Motion Cues for Animal Action Recognition.”** It extends CLIP with motion‑aware embeddings extracted from optical flow via a teacher‑student distillation framework (MoCLIP) and fuses them through a cross‑attention Transformer block (TFAM). The approach sets a new state‑of‑the‑art on the challenging **Animal Kingdom** benchmark, reaching **77.09 mAP** without relying on text prompts.
 
