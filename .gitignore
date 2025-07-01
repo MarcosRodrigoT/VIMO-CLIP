@@ -3,6 +3,7 @@ logs/
 paper_images/
 *.h5
 *.log
+*.xlsx
 
 venv/
 __pycache__/
