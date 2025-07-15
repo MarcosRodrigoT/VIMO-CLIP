@@ -9,7 +9,7 @@ data:
   num_classes: 140
   class_names_dir: "dataset/annotation/ak_action.csv"
   val_dataset_path:   "dataset/embeddings/val_clip_embeddings.h5"
-  flow_dataset_path:  "dataset/embeddings/flow_embeddings.h5"
+  frame_diff_dataset_path: "dataset/embeddings/frame_diff_embeddings.h5"
   output: "animal_class_results.csv"
 
 model:
