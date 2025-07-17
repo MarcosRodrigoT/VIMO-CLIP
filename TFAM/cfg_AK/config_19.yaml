@@ -14,10 +14,10 @@ logging:
 
 data:
   num_classes: 140
-  class_names_dir: "dataset/annotation/ak_action.csv"
-  train_dataset_path: "dataset/embeddings/train_clip_embeddings.h5"
-  val_dataset_path:   "dataset/embeddings/val_clip_embeddings.h5"
-  frame_diff_dataset_path: "dataset/embeddings/frame_diff_embeddings.h5"
+  class_names_dir: "../dataset/annotations/ak_action.csv"
+  train_dataset_path: "/mnt/Data/enz/AnimalKingdom/action_recognition/dataset/ak_train_clip_vit32.h5"
+  val_dataset_path:   "/mnt/Data/enz/AnimalKingdom/action_recognition/dataset/ak_val_clip_vit32.h5"
+  frame_diff_dataset_path: "/mnt/Data/enz/AnimalKingdom/action_recognition/dataset/frame_diff_embeddings_Atenea_20250714-173531.h5"
 
 model:
   d_model: 512
@@ -27,7 +27,7 @@ model:
   use_cross_attention: true
   use_only_rgb: false
   use_only_flow: false
-  use_pe: false
+  use_pe: true
   concat_dim: 1
   dropout: 0.1
   mlp_dropout: 0.1
