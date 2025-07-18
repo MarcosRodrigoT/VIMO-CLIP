@@ -14,7 +14,7 @@ from tqdm import tqdm
 # Load the CLIP model
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
+clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").eval().to(device)
 clip_processor = CLIPImageProcessor.from_pretrained("openai/clip-vit-base-patch32")
 
 decord.bridge.set_bridge("torch")
@@ -43,7 +43,7 @@ def create_hdf5_dataset(data_root, annotation_file, class_file, output_hdf5, mod
     num_classes = len(class_df)
 
     # 2. Leer anotaciones
-    annotations_df = pd.read_csv(annotation_file, header=None, sep=" ")
+    annotations_df = pd.read_csv(annotation_file, header=None, sep=r"\s+")
     annotations = annotations_df.values.tolist()
 
     # 3. Crear archivo HDF5 de salida
@@ -117,7 +117,7 @@ def create_hdf5_dataset(data_root, annotation_file, class_file, output_hdf5, mod
 
 if __name__ == "__main__":
     # Paths
-    video_dir = "/mnt/Data/mrt/mammalnet/trimmed_video/"
+    video_dir = "/mnt/Data/mrt/mammalnet/"
     annotation_dir = "dataset/annotations"
     class_file = "dataset/annotations/mn_action.csv"
     # Output directory for embeddings

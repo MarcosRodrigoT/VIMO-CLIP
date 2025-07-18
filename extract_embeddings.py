@@ -14,7 +14,7 @@ from tqdm import tqdm
 # Load the CLIP model
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch16")
+clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch16").eval().to(device)
 clip_processor = CLIPImageProcessor.from_pretrained("openai/clip-vit-base-patch16")
 
 decord.bridge.set_bridge("torch")
