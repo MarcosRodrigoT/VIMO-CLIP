@@ -47,24 +47,49 @@ def latest_checkpoint(ckpt_dir):
     return os.path.join(ckpt_dir, ckpts[-1])
 
 
-def read_and_transform_video(video_path, device, clip_transform):
+def read_and_transform_video_chunked(video_path, device, clip_transform, chunk_size=32):
     """
     Reads the video frames from disk and applies the transform that FrameDiffStudentModel expects.
-    Returns a tensor of shape (T, C, H, W).
+    Returns a generator that yields chunks of transformed frames.
+    Each chunk has shape (chunk_size, C, H, W) or smaller for the last chunk.
     """
     video, _, _ = read_video(video_path, pts_unit="sec")  # shape: (T, H, W, C)
     video = video.permute(0, 3, 1, 2)  # => (T, C, H, W)
 
-    frames_processed = []
-    for frame_tensor in video:
-        pil_img = to_pil_image(frame_tensor)
-        transformed = clip_transform(pil_img)
-        frames_processed.append(transformed)
+    total_frames = video.shape[0]
 
-    return torch.stack(frames_processed, dim=0).to(device)
+    for start_idx in range(0, total_frames, chunk_size):
+        end_idx = min(start_idx + chunk_size, total_frames)
+        chunk_frames = video[start_idx:end_idx]
+
+        frames_processed = []
+        for frame_tensor in chunk_frames:
+            pil_img = to_pil_image(frame_tensor)
+            transformed = clip_transform(pil_img)
+            frames_processed.append(transformed)
+
+        yield torch.stack(frames_processed, dim=0).to(device)
 
 
-# def main(frame_diff_videos_dir, output_h5_path, checkpoint_dir, clip_model_name, batch_size, num_workers, num_classes):
+def process_video_in_chunks(video_path, model, clip_transform, device, chunk_size=32):
+    """
+    Process a video in chunks and return the concatenated embeddings.
+    """
+    all_embeddings = []
+
+    for chunk_frames in read_and_transform_video_chunked(video_path, device, clip_transform, chunk_size):
+        # FrameDiffStudentModel expects (B, T, 3, H, W)
+        chunk_frames = chunk_frames.unsqueeze(0)  # => (1, chunk_size, C, H, W)
+
+        with torch.no_grad():
+            embeddings, _, _ = model(chunk_frames)  # => (1, chunk_size, embed_dim)
+            embeddings = embeddings.squeeze(0).cpu()  # => (chunk_size, embed_dim)
+            all_embeddings.append(embeddings)
+
+    # Concatenate all chunks
+    return torch.cat(all_embeddings, dim=0).numpy()  # => (T, embed_dim)
+
+
 def main(args):
     device = "cuda" if torch.cuda.is_available() else "cpu"
     # We'll store all embeddings in one HDF5 file
@@ -92,26 +117,19 @@ def main(args):
     # === Inference & Save to .h5 ===
     # We'll store one group per video in the .h5 file
     with h5py.File(args.output_h5_path, "w") as h5f:
-        with torch.no_grad():
-            for batch_paths in dataloader:
-                for video_path in batch_paths:
-                    video_path = video_path.strip()
-                    video_id = os.path.splitext(os.path.basename(video_path))[0]
+        for batch_paths in dataloader:
+            for video_path in batch_paths:
+                video_path = video_path.strip()
+                video_id = os.path.splitext(os.path.basename(video_path))[0]
 
-                    # Read and transform frames => (T, C, H, W)
-                    frames = read_and_transform_video(video_path, device, clip_transform)
+                # Process video in chunks
+                embeddings = process_video_in_chunks(video_path, model, clip_transform, device, chunk_size=args.chunk_size)
 
-                    # FrameDiffStudentModel expects (B, T, 3, H, W)
-                    frames = frames.unsqueeze(0)  # => (1, T, C, H, W)
-                    embeddings, _, _ = model(frames)  # => (1, T, embed_dim), (1, num_classes)
+                # Create group for this video
+                group = h5f.create_group(video_id)
+                group.create_dataset("embeddings", data=embeddings)
 
-                    embeddings = embeddings.squeeze(0).cpu().numpy()  # => (T, embed_dim)
-
-                    # Create group for this video
-                    group = h5f.create_group(video_id)
-                    group.create_dataset("embeddings", data=embeddings)
-
-                    print(f"[{video_id}] shape={embeddings.shape} => saved to group '{video_id}'.")
+                print(f"[{video_id}] shape={embeddings.shape} => saved to group '{video_id}'.")
 
     print(f"Inference complete! Frame_diff embeddings saved to: {args.output_h5_path}")
 
@@ -131,6 +149,9 @@ if __name__ == "__main__":
 
     # Model metadata
     parser.add_argument("--num-classes", type=int, default=140, help="Number of classes the student was trained for.")
+
+    # New argument for chunk processing
+    parser.add_argument("--chunk-size", type=int, default=256, help="Number of frames to process at once (lower = less memory usage).")
 
     args = parser.parse_args()
 
