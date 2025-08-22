@@ -1,14 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-Benchmark optical flow vs. frame differencing.
+Benchmark optical flow vs. frame differencing on multiple random videos.
 
-This version replaces the OpenCV Farnebäck optical flow with RAFT (via ptlflow).
-- Keeps your MemoryMonitor for CPU RSS.
-- Adds optional GPU memory tracking for RAFT runs.
-- Preserves your reporting format and file outputs.
+This version processes multiple random videos from a directory and computes
+mean statistics across all examples.
 
 Example:
-    python benchmark.py input.mp4 --raft_model raft --raft_ckpt things --keep_videos --save_results
+    python benchmark.py /path/to/videos --num_videos 5 --raft_model raft --raft_ckpt things --keep_videos --save_results
 """
 
 import os
@@ -18,8 +16,9 @@ import numpy as np
 import time
 import psutil
 import json
+import random
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, List
 import threading
 
 # --- NEW: torch / ptlflow imports for RAFT ---
@@ -70,6 +69,31 @@ class MemoryMonitor:
 # =========================
 # Video utilities
 # =========================
+def find_video_files(directory: str) -> List[str]:
+    """Find all video files in the given directory."""
+    video_extensions = {".mp4", ".avi", ".mov", ".mkv", ".wmv", ".flv", ".webm", ".m4v"}
+    video_files = []
+
+    directory_path = Path(directory)
+    if not directory_path.exists() or not directory_path.is_dir():
+        raise ValueError(f"Directory does not exist or is not a directory: {directory}")
+
+    for file_path in directory_path.iterdir():
+        if file_path.is_file() and file_path.suffix.lower() in video_extensions:
+            video_files.append(str(file_path))
+
+    return video_files
+
+
+def sample_random_videos(video_files: List[str], num_videos: int) -> List[str]:
+    """Sample random videos from the list."""
+    if num_videos >= len(video_files):
+        print(f"Warning: Requested {num_videos} videos but only {len(video_files)} available. Using all videos.")
+        return video_files
+
+    return random.sample(video_files, num_videos)
+
+
 def get_video_info(video_path: str) -> Dict[str, Any]:
     """Extract basic information about the video."""
     cap = cv2.VideoCapture(video_path)
@@ -371,113 +395,196 @@ def analyze_output_quality(optical_flow_path: str, frame_diff_path: str) -> Dict
     return quality_metrics
 
 
-def print_comparison_report(video_info: Dict[str, Any], of_metrics: Dict[str, Any], fd_metrics: Dict[str, Any], quality_metrics: Dict[str, Any]):
-    """Print a comprehensive comparison report (unchanged formatting)."""
+def compute_mean_metrics(all_results: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Compute mean statistics across all video results."""
+    if not all_results:
+        return {}
+
+    # Separate successful results
+    successful_results = [r for r in all_results if r["optical_flow_metrics"]["success"] and r["frame_difference_metrics"]["success"]]
+
+    if not successful_results:
+        return {"error": "No successful results to compute means from"}
+
+    # Initialize accumulators
+    of_metrics_sum = {}
+    fd_metrics_sum = {}
+    video_info_sum = {}
+    quality_metrics_sum = {"optical_flow": {}, "frame_difference": {}}
+
+    # Collect all numeric metrics
+    numeric_of_keys = ["processing_time_seconds", "max_memory_mb", "output_file_size_mb", "frames_processed", "fps_processing_rate", "memory_per_frame_mb", "max_gpu_memory_mb"]
+    numeric_fd_keys = ["processing_time_seconds", "max_memory_mb", "output_file_size_mb", "frames_processed", "fps_processing_rate", "memory_per_frame_mb"]
+    numeric_video_keys = ["width", "height", "fps", "frame_count", "duration_seconds", "file_size_mb"]
+    numeric_quality_keys = ["mean_pixel_intensity", "std_pixel_intensity", "non_zero_pixels_ratio"]
+
+    # Sum all metrics
+    for result in successful_results:
+        of_m = result["optical_flow_metrics"]
+        fd_m = result["frame_difference_metrics"]
+        vi = result["video_info"]
+        qm = result.get("quality_metrics", {})
+
+        for key in numeric_of_keys:
+            if key in of_m:
+                of_metrics_sum[key] = of_metrics_sum.get(key, 0) + of_m[key]
+
+        for key in numeric_fd_keys:
+            if key in fd_m:
+                fd_metrics_sum[key] = fd_metrics_sum.get(key, 0) + fd_m[key]
+
+        for key in numeric_video_keys:
+            if key in vi:
+                video_info_sum[key] = video_info_sum.get(key, 0) + vi[key]
+
+        for method in ["optical_flow", "frame_difference"]:
+            if method in qm:
+                for key in numeric_quality_keys:
+                    if key in qm[method]:
+                        quality_metrics_sum[method][key] = quality_metrics_sum[method].get(key, 0) + qm[method][key]
+
+    # Compute means
+    n = len(successful_results)
+    mean_metrics = {
+        "num_videos_processed": len(all_results),
+        "num_successful_videos": n,
+        "optical_flow_metrics": {key: val / n for key, val in of_metrics_sum.items()},
+        "frame_difference_metrics": {key: val / n for key, val in fd_metrics_sum.items()},
+        "video_info": {key: val / n for key, val in video_info_sum.items()},
+        "quality_metrics": {
+            method: {key: val / n for key, val in metrics.items()} for method, metrics in quality_metrics_sum.items() if metrics  # Only include if there are metrics
+        },
+    }
+
+    return mean_metrics
+
+
+def print_mean_comparison_report(mean_metrics: Dict[str, Any], video_files: List[str]):
+    """Print a comprehensive mean comparison report."""
     print("=" * 80)
-    print("VIDEO PROCESSING BENCHMARK REPORT")
+    print("MULTI-VIDEO BENCHMARK REPORT (MEAN STATISTICS)")
     print("=" * 80)
 
-    # Video information
-    print(f"\n📹 VIDEO INFORMATION:")
-    print(f"  Resolution: {video_info['resolution']}")
-    print(f"  Duration: {video_info['duration_seconds']:.2f} seconds")
-    print(f"  Frame Count: {video_info['frame_count']}")
-    print(f"  FPS: {video_info['fps']:.2f}")
-    print(f"  File Size: {video_info['file_size_mb']:.2f} MB")
+    if "error" in mean_metrics:
+        print(f"❌ Error: {mean_metrics['error']}")
+        return
+
+    print(f"\n📊 DATASET INFORMATION:")
+    print(f"  Total videos processed: {mean_metrics['num_videos_processed']}")
+    print(f"  Successful videos: {mean_metrics['num_successful_videos']}")
+    print(f"  Success rate: {mean_metrics['num_successful_videos'] / mean_metrics['num_videos_processed'] * 100:.1f}%")
+
+    # Mean video information
+    vi = mean_metrics["video_info"]
+    print(f"\n📹 MEAN VIDEO CHARACTERISTICS:")
+    print(f"  Resolution: {vi['width']:.0f}x{vi['height']:.0f}")
+    print(f"  Duration: {vi['duration_seconds']:.2f} seconds")
+    print(f"  Frame Count: {vi['frame_count']:.0f}")
+    print(f"  FPS: {vi['fps']:.2f}")
+    print(f"  File Size: {vi['file_size_mb']:.2f} MB")
 
     # Processing comparison
-    print(f"\n⏱️  PROCESSING TIME COMPARISON:")
-    if of_metrics["success"] and fd_metrics["success"]:
-        speedup = of_metrics["processing_time_seconds"] / fd_metrics["processing_time_seconds"]
-        faster_method = "Frame Difference" if speedup > 1 else "Optical Flow"
-        print(f"  Optical Flow (RAFT): {of_metrics['processing_time_seconds']:.2f} seconds")
-        print(f"  Frame Difference:    {fd_metrics['processing_time_seconds']:.2f} seconds")
-        print(f"  🏆 {faster_method} is {abs(speedup):.2f}x faster")
-    else:
-        print(f"  Optical Flow: {'FAILED' if not of_metrics['success'] else f'{of_metrics['processing_time_seconds']:.2f} seconds'}")
-        print(f"  Frame Difference: {'FAILED' if not fd_metrics['success'] else f'{fd_metrics['processing_time_seconds']:.2f} seconds'}")
+    of_m = mean_metrics["optical_flow_metrics"]
+    fd_m = mean_metrics["frame_difference_metrics"]
+
+    print(f"\n⏱️  MEAN PROCESSING TIME COMPARISON:")
+    speedup = of_m["processing_time_seconds"] / fd_m["processing_time_seconds"]
+    faster_method = "Frame Difference" if speedup > 1 else "Optical Flow"
+    print(f"  Optical Flow (RAFT): {of_m['processing_time_seconds']:.2f} seconds")
+    print(f"  Frame Difference:    {fd_m['processing_time_seconds']:.2f} seconds")
+    print(f"  🏆 {faster_method} is {abs(speedup):.2f}x faster on average")
 
     # Memory usage comparison
-    print(f"\n🧠 MEMORY USAGE COMPARISON:")
-    if of_metrics["success"] and fd_metrics["success"]:
-        memory_ratio = of_metrics["max_memory_mb"] / fd_metrics["max_memory_mb"] if fd_metrics["max_memory_mb"] > 0 else float("inf")
-        efficient_method = "Frame Difference" if memory_ratio > 1 else "Optical Flow"
-        print(f"  Optical Flow (CPU RSS): {of_metrics['max_memory_mb']:.2f} MB (max)")
-        print(f"  Frame Difference (CPU RSS): {fd_metrics['max_memory_mb']:.2f} MB (max)")
-        print(f"  🏆 {efficient_method} uses {abs(memory_ratio):.2f}x less CPU memory")
-    else:
-        print(f"  Optical Flow (CPU RSS): {'N/A' if not of_metrics['success'] else f'{of_metrics['max_memory_mb']:.2f} MB'}")
-        print(f"  Frame Difference (CPU RSS): {'N/A' if not fd_metrics['success'] else f'{fd_metrics['max_memory_mb']:.2f} MB'}")
+    print(f"\n🧠 MEAN MEMORY USAGE COMPARISON:")
+    memory_ratio = of_m["max_memory_mb"] / fd_m["max_memory_mb"] if fd_m["max_memory_mb"] > 0 else float("inf")
+    efficient_method = "Frame Difference" if memory_ratio > 1 else "Optical Flow"
+    print(f"  Optical Flow (CPU RSS): {of_m['max_memory_mb']:.2f} MB (max)")
+    print(f"  Frame Difference (CPU RSS): {fd_m['max_memory_mb']:.2f} MB (max)")
+    print(f"  🏆 {efficient_method} uses {abs(memory_ratio):.2f}x less CPU memory on average")
 
-    # Optional GPU memory info
-    if "max_gpu_memory_mb" in of_metrics:
-        print(f"  Optical Flow (GPU mem): {of_metrics['max_gpu_memory_mb']:.2f} MB (peak allocated)")
+    if "max_gpu_memory_mb" in of_m:
+        print(f"  Optical Flow (GPU mem): {of_m['max_gpu_memory_mb']:.2f} MB (peak allocated)")
 
     # Processing rate comparison
-    print(f"\n📊 PROCESSING RATE:")
-    if of_metrics.get("fps_processing_rate") is not None:
-        print(f"  Optical Flow (RAFT): {of_metrics['fps_processing_rate']:.2f} FPS processing rate")
-    if fd_metrics.get("fps_processing_rate") is not None:
-        print(f"  Frame Difference:     {fd_metrics['fps_processing_rate']:.2f} FPS processing rate")
+    print(f"\n📊 MEAN PROCESSING RATE:")
+    print(f"  Optical Flow (RAFT): {of_m['fps_processing_rate']:.2f} FPS processing rate")
+    print(f"  Frame Difference:     {fd_m['fps_processing_rate']:.2f} FPS processing rate")
 
     # Output file sizes
-    print(f"\n💾 OUTPUT FILE SIZES:")
-    if of_metrics["success"]:
-        print(f"  Optical Flow (RAFT): {of_metrics['output_file_size_mb']:.2f} MB")
-    if fd_metrics["success"]:
-        print(f"  Frame Difference:     {fd_metrics['output_file_size_mb']:.2f} MB")
+    print(f"\n💾 MEAN OUTPUT FILE SIZES:")
+    print(f"  Optical Flow (RAFT): {of_m['output_file_size_mb']:.2f} MB")
+    print(f"  Frame Difference:     {fd_m['output_file_size_mb']:.2f} MB")
 
     # Quality metrics
-    if quality_metrics:
-        print(f"\n🎨 OUTPUT QUALITY METRICS:")
-        for method, q in quality_metrics.items():
-            method_name = method.replace("_", " ").title()
-            print(f"  {method_name}:")
-            print(f"    Mean Pixel Intensity: {q['mean_pixel_intensity']:.2f}")
-            print(f"    Std Pixel Intensity:  {q['std_pixel_intensity']:.2f}")
-            print(f"    Non-zero Pixels Ratio:{q['non_zero_pixels_ratio']:.4f}")
+    qm = mean_metrics.get("quality_metrics", {})
+    if qm:
+        print(f"\n🎨 MEAN OUTPUT QUALITY METRICS:")
+        for method, q in qm.items():
+            if q:  # Only show if metrics exist
+                method_name = method.replace("_", " ").title()
+                print(f"  {method_name}:")
+                print(f"    Mean Pixel Intensity: {q['mean_pixel_intensity']:.2f}")
+                print(f"    Std Pixel Intensity:  {q['std_pixel_intensity']:.2f}")
+                print(f"    Non-zero Pixels Ratio:{q['non_zero_pixels_ratio']:.4f}")
 
-    # Errors
-    if not of_metrics["success"] or not fd_metrics["success"]:
-        print(f"\n❌ ERRORS:")
-        if not of_metrics["success"]:
-            print(f"  Optical Flow: {of_metrics['error']}")
-        if not fd_metrics["success"]:
-            print(f"  Frame Difference: {fd_metrics['error']}")
+    # List processed videos
+    print(f"\n📁 PROCESSED VIDEOS:")
+    for i, video_path in enumerate(video_files, 1):
+        print(f"  {i:2d}. {Path(video_path).name}")
 
 
 # =========================
 # CLI
 # =========================
 def main():
-    parser = argparse.ArgumentParser(description="Benchmark RAFT optical flow vs frame difference processing")
-    parser.add_argument("video_path", help="Path to input video file")
+    parser = argparse.ArgumentParser(description="Benchmark RAFT optical flow vs frame difference processing on multiple random videos")
+    parser.add_argument("video_directory", help="Directory containing video files")
+    parser.add_argument("--num_videos", type=int, default=5, help="Number of random videos to process (default: 5)")
     parser.add_argument("--output_dir", default="./benchmark_output", help="Directory to save output videos and results (default: ./benchmark_output)")
     parser.add_argument("--save_results", action="store_true", help="Save detailed results to JSON file")
     parser.add_argument("--keep_videos", action="store_true", help="Keep generated videos (default: delete after analysis)")
+    parser.add_argument("--seed", type=int, help="Random seed for reproducible video sampling")
 
-    # NEW: RAFT options
+    # RAFT options
     parser.add_argument("--raft_model", default="raft", help="ptlflow model name (default: raft)")
     parser.add_argument("--raft_ckpt", default="things", help="ptlflow checkpoint (default: things)")
-    parser.add_argument("--disable_cudnn", action="store_true", help="Disable cuDNN (mirrors your earlier script)")
+    parser.add_argument("--disable_cudnn", action="store_true", help="Disable cuDNN")
 
     args = parser.parse_args()
 
-    # Validate input
-    if not os.path.exists(args.video_path):
-        print(f"Error: Video file not found: {args.video_path}")
+    # Set random seed if provided
+    if args.seed is not None:
+        random.seed(args.seed)
+        print(f"🎲 Random seed set to: {args.seed}")
+
+    # Validate input directory
+    if not os.path.exists(args.video_directory):
+        print(f"Error: Video directory not found: {args.video_directory}")
         return 1
+
+    # Find video files
+    print(f"🔍 Searching for video files in: {args.video_directory}")
+    try:
+        all_video_files = find_video_files(args.video_directory)
+    except ValueError as e:
+        print(f"Error: {e}")
+        return 1
+
+    if not all_video_files:
+        print(f"Error: No video files found in directory: {args.video_directory}")
+        return 1
+
+    print(f"📁 Found {len(all_video_files)} video files")
+
+    # Sample random videos
+    selected_videos = sample_random_videos(all_video_files, args.num_videos)
+    print(f"🎯 Selected {len(selected_videos)} videos for processing")
 
     # Output dir
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Output paths
-    video_name = Path(args.video_path).stem
-    of_output = output_dir / f"{video_name}_optical_flow_raft.mp4"
-    fd_output = output_dir / f"{video_name}_frame_diff.mp4"
-
-    print(f"🚀 Starting benchmark for: {args.video_path}")
+    print(f"🚀 Starting multi-video benchmark")
     print(f"📁 Output directory: {output_dir}")
 
     try:
@@ -487,59 +594,122 @@ def main():
 
         # Load RAFT once
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        print(f"🔧 Loading RAFT model ({args.raft_model}, {args.raft_ckpt}) on {device}...")
         raft_model, device = load_raft(args.raft_model, args.raft_ckpt, device)
 
-        # Video info
-        print("\n📹 Analyzing video...")
-        video_info = get_video_info(args.video_path)
+        # Process each video
+        all_results = []
+        for i, video_path in enumerate(selected_videos, 1):
+            video_name = Path(video_path).stem
+            print(f"\n{'='*60}")
+            print(f"Processing video {i}/{len(selected_videos)}: {video_name}")
+            print(f"{'='*60}")
 
-        # RAFT optical flow
-        print("🌊 Running optical flow (RAFT) processing...")
-        of_metrics = compute_optical_flow_benchmark(args.video_path, str(of_output), raft_model=raft_model, device=device)
+            # Output paths
+            of_output = output_dir / f"{video_name}_optical_flow_raft.mp4"
+            fd_output = output_dir / f"{video_name}_frame_diff.mp4"
 
-        # Frame differencing
-        print("🔄 Running frame difference processing...")
-        fd_metrics = compute_frame_difference_benchmark(args.video_path, str(fd_output))
+            try:
+                # Video info
+                print("📹 Analyzing video...")
+                video_info = get_video_info(video_path)
 
-        # Quality metrics
-        print("🎨 Analyzing output quality...")
-        quality_metrics = analyze_output_quality(str(of_output), str(fd_output))
+                # RAFT optical flow
+                print("🌊 Running optical flow (RAFT) processing...")
+                of_metrics = compute_optical_flow_benchmark(video_path, str(of_output), raft_model=raft_model, device=device)
 
-        # Report
-        print_comparison_report(video_info, of_metrics, fd_metrics, quality_metrics)
+                # Frame differencing
+                print("🔄 Running frame difference processing...")
+                fd_metrics = compute_frame_difference_benchmark(video_path, str(fd_output))
+
+                # Quality metrics
+                print("🎨 Analyzing output quality...")
+                quality_metrics = analyze_output_quality(str(of_output), str(fd_output))
+
+                # Store results
+                result = {
+                    "video_path": video_path,
+                    "video_info": video_info,
+                    "optical_flow_metrics": of_metrics,
+                    "frame_difference_metrics": fd_metrics,
+                    "quality_metrics": quality_metrics,
+                }
+                all_results.append(result)
+
+                # Print individual result summary
+                success_status = "✅" if of_metrics["success"] and fd_metrics["success"] else "❌"
+                print(f"{success_status} Processing time: OF={of_metrics.get('processing_time_seconds', 'N/A'):.2f}s, FD={fd_metrics.get('processing_time_seconds', 'N/A'):.2f}s")
+
+                # Clean up videos unless requested to keep
+                if not args.keep_videos:
+                    for vp in [of_output, fd_output]:
+                        if vp.exists():
+                            vp.unlink()
+
+            except Exception as e:
+                print(f"❌ Failed to process {video_name}: {e}")
+                # Store failed result
+                result = {
+                    "video_path": video_path,
+                    "video_info": {"error": str(e)},
+                    "optical_flow_metrics": {"success": False, "error": str(e)},
+                    "frame_difference_metrics": {"success": False, "error": str(e)},
+                    "quality_metrics": {},
+                }
+                all_results.append(result)
+
+        # Compute mean statistics
+        print(f"\n🧮 Computing mean statistics across all videos...")
+        mean_metrics = compute_mean_metrics(all_results)
+
+        # Print mean report
+        print_mean_comparison_report(mean_metrics, selected_videos)
 
         # Save results (optional)
         if args.save_results:
-            results = {
-                "video_info": video_info,
-                "optical_flow_metrics": of_metrics,
-                "frame_difference_metrics": fd_metrics,
-                "quality_metrics": quality_metrics,
-                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-                "input_video": str(args.video_path),
-                "raft_model": args.raft_model,
-                "raft_ckpt": args.raft_ckpt,
-            }
-            results_file = output_dir / f"{video_name}_benchmark_results.json"
-            with open(results_file, "w") as f:
-                json.dump(results, f, indent=2)
-            print(f"\n💾 Detailed results saved to: {results_file}")
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
 
-        # Clean up videos unless requested to keep
-        if not args.keep_videos:
-            for vp in [of_output, fd_output]:
-                if vp.exists():
-                    vp.unlink()
-            print(f"\n🧹 Temporary videos cleaned up")
+            # Save individual results
+            individual_results_file = output_dir / f"individual_results_{timestamp}.json"
+            individual_results = {
+                "individual_results": all_results,
+                "processing_info": {
+                    "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "video_directory": str(args.video_directory),
+                    "num_videos_requested": args.num_videos,
+                    "num_videos_processed": len(selected_videos),
+                    "raft_model": args.raft_model,
+                    "raft_ckpt": args.raft_ckpt,
+                    "seed": args.seed,
+                },
+            }
+
+            with open(individual_results_file, "w") as f:
+                json.dump(individual_results, f, indent=2)
+            print(f"💾 Individual results saved to: {individual_results_file}")
+
+            # Save mean results
+            mean_results_file = output_dir / f"mean_results_{timestamp}.json"
+            mean_results = {
+                "mean_metrics": mean_metrics,
+                "processing_info": individual_results["processing_info"],
+                "selected_videos": selected_videos,
+            }
+
+            with open(mean_results_file, "w") as f:
+                json.dump(mean_results, f, indent=2)
+            print(f"💾 Mean results saved to: {mean_results_file}")
+
+        if args.keep_videos:
+            print(f"\n📁 Output videos saved in: {output_dir}")
+            print(f"🧹 Individual videos kept as requested")
         else:
-            print(f"\n📁 Output videos saved:")
-            print(f"  Optical Flow (RAFT): {of_output}")
-            print(f"  Frame Difference:    {fd_output}")
+            print(f"\n🧹 Temporary videos cleaned up")
 
         return 0
 
     except Exception as e:
-        print(f"❌ Benchmark failed: {e}")
+        print(f"❌ Multi-video benchmark failed: {e}")
         return 1
 
 
